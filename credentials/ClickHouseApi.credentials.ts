@@ -55,11 +55,19 @@ export class ClickHouseApi implements ICredentialType {
 			name: 'protocol',
 			type: 'options',
 			options: [
-				{ name: 'HTTP', value: 'http' },
-				{ name: 'HTTPS', value: 'https' },
+				{
+					name: 'HTTP',
+					value: 'http',
+					description: 'Unencrypted — credentials are sent in plaintext. Use only for local/trusted networks.',
+				},
+				{
+					name: 'HTTPS (Recommended)',
+					value: 'https',
+					description: 'Encrypted connection. Required for ClickHouse Cloud (port 8443).',
+				},
 			],
 			default: 'http',
-			description: 'Use HTTPS for ClickHouse Cloud (port 8443)',
+			description: 'HTTPS is strongly recommended. HTTP transmits credentials in plaintext.',
 		},
 	];
 

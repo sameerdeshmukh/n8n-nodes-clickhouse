@@ -17,6 +17,7 @@ import {
 	chunkArray,
 	parseClickHouseResponse,
 	extractClickHouseError,
+	validateIdentifier,
 } from './ClickHouse.helpers';
 import type { ClickHouseCredentials, QueryParam } from './ClickHouse.helpers';
 
@@ -100,8 +101,8 @@ export class ClickHouse implements INodeType {
 					};
 					const queryParams: QueryParam[] = queryParametersData.params || [];
 
-					// Append LIMIT if not already present
-					const limit = options.limit ?? 100;
+					// Append LIMIT if not already present — use safe integer coercion
+					const limit = Math.max(0, Math.floor(options.limit ?? 100));
 					if (limit > 0 && !/\blimit\b/i.test(query)) {
 						query = `${query.replace(/;\s*$/, '')} LIMIT ${limit}`;
 					}
@@ -151,7 +152,11 @@ export class ClickHouse implements INodeType {
 				chunkSize?: number;
 				database?: string;
 			};
-			const chunkSize = options.chunkSize ?? 1000;
+
+			// Validate table name to prevent SQL injection
+			validateIdentifier(table, 'table name');
+
+			const chunkSize = Math.max(1, Math.min(Math.floor(options.chunkSize ?? 1000), 100_000));
 			const database = options.database || credentials.database;
 
 			// Collect all items' JSON data
@@ -189,13 +194,12 @@ export class ClickHouse implements INodeType {
 				}
 			}
 
-			// Return the original items on success
+			// Return summary on success
 			if (returnData.length === 0) {
 				returnData.push({
 					json: {
 						success: true,
 						insertedRows: allRows.length,
-						table,
 					},
 					pairedItem: { item: 0 },
 				});

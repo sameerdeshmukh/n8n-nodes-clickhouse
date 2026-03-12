@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This guide will help you get starte
 
 ### Prerequisites
 
-- Node.js >= 20
+- Node.js >= 22
 - npm >= 9
 - n8n installed globally or locally for testing
 
@@ -15,7 +15,7 @@ Thank you for your interest in contributing! This guide will help you get starte
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/your-org/n8n-nodes-clickhouse.git
+git clone https://github.com/sameerdeshmukh/n8n-nodes-clickhouse.git
 cd n8n-nodes-clickhouse
 ```
 

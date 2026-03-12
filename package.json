@@ -1,5 +1,5 @@
 {
-  "name": "n8n-nodes-clickhouse",
+  "name": "n8n-nodes-clickhouse-db",
   "version": "1.0.0",
   "description": "n8n community node for ClickHouse — query, insert, and manage ClickHouse from n8n workflows and AI agents",
   "keywords": [

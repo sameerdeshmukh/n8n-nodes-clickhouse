@@ -1,0 +1,50 @@
+{
+  "name": "n8n-nodes-clickhouse",
+  "version": "1.0.0",
+  "description": "n8n community node for ClickHouse — query, insert, and manage ClickHouse from n8n workflows and AI agents",
+  "keywords": [
+    "n8n-community-node-package",
+    "clickhouse",
+    "database",
+    "analytics",
+    "olap",
+    "columnar"
+  ],
+  "license": "MIT",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && gulp build:icons",
+    "dev": "tsc --watch",
+    "format": "prettier nodes credentials --write",
+    "lint": "eslint nodes credentials --ext .ts",
+    "lintfix": "eslint nodes credentials --ext .ts --fix",
+    "prepublishOnly": "npm run build && npm run lint"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/ClickHouseApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/ClickHouse/ClickHouse.node.js"
+    ]
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.50.0",
+    "eslint-plugin-n8n-nodes-base": "^1.16.0",
+    "gulp": "^4.0.2",
+    "n8n-workflow": "*",
+    "prettier": "^3.0.0",
+    "typescript": "^5.1.3"
+  }
+}

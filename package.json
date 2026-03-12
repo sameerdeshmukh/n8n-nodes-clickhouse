@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-clickhouse-db",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "n8n community node for ClickHouse — query, insert, and manage ClickHouse from n8n workflows and AI agents",
   "keywords": [
     "n8n-community-node-package",
@@ -10,6 +10,18 @@
     "olap",
     "columnar"
   ],
+  "author": {
+    "name": "Sameer Deshmukh",
+    "email": "sameer.sggs@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sameerdeshmukh/n8n-nodes-clickhouse.git"
+  },
+  "homepage": "https://github.com/sameerdeshmukh/n8n-nodes-clickhouse#readme",
+  "bugs": {
+    "url": "https://github.com/sameerdeshmukh/n8n-nodes-clickhouse/issues"
+  },
   "license": "MIT",
   "main": "index.js",
   "scripts": {

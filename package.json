@@ -18,6 +18,7 @@
     "format": "prettier nodes credentials --write",
     "lint": "eslint nodes credentials --ext .ts",
     "lintfix": "eslint nodes credentials --ext .ts --fix",
+    "test": "jest",
     "prepublishOnly": "npm run build && npm run lint"
   },
   "n8n": {
@@ -38,13 +39,16 @@
     "n8n-workflow": "*"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
     "@typescript-eslint/parser": "^8.57.0",
     "eslint": "^8.50.0",
     "eslint-plugin-n8n-nodes-base": "^1.16.0",
     "gulp": "^5.0.1",
+    "jest": "^30.3.0",
     "n8n-workflow": "*",
     "prettier": "^3.0.0",
+    "ts-jest": "^29.4.6",
     "typescript": "^5.1.3"
   }
 }

@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - 2026-xx-xx
+## [1.0.0] - 2026-03-12
 
 ### Added
 - Execute Query operation with parameterized query support (`{param:Type}` syntax)

@@ -90,10 +90,34 @@ describe('buildBaseUrl', () => {
 // ── buildAuthHeader ─────────────────────────────────────────────────
 
 describe('buildAuthHeader', () => {
-	it('returns a Basic auth header', () => {
+	it('returns a Basic auth header by default', () => {
 		const header = buildAuthHeader(creds);
 		const decoded = Buffer.from(header.replace('Basic ', ''), 'base64').toString();
 		expect(decoded).toBe('default:secret');
+	});
+
+	it('returns a Basic auth header when authMethod is basicAuth', () => {
+		const header = buildAuthHeader({ ...creds, authMethod: 'basicAuth' });
+		expect(header).toMatch(/^Basic /);
+		const decoded = Buffer.from(header.replace('Basic ', ''), 'base64').toString();
+		expect(decoded).toBe('default:secret');
+	});
+
+	it('returns a Bearer token when authMethod is bearerToken', () => {
+		const header = buildAuthHeader({
+			...creds,
+			authMethod: 'bearerToken',
+			jwtToken: 'my.jwt.token',
+		});
+		expect(header).toBe('Bearer my.jwt.token');
+	});
+
+	it('returns Bearer with empty string when jwtToken is missing', () => {
+		const header = buildAuthHeader({
+			...creds,
+			authMethod: 'bearerToken',
+		});
+		expect(header).toBe('Bearer ');
 	});
 });
 

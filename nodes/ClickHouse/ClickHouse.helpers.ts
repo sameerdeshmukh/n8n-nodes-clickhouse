@@ -59,6 +59,8 @@ export interface ClickHouseCredentials {
 	username: string;
 	password: string;
 	protocol: string;
+	authMethod?: string;
+	jwtToken?: string;
 }
 
 export interface QueryParam {
@@ -106,6 +108,9 @@ export function buildBaseUrl(credentials: ClickHouseCredentials): string {
 }
 
 export function buildAuthHeader(credentials: ClickHouseCredentials): string {
+	if (credentials.authMethod === 'bearerToken') {
+		return `Bearer ${credentials.jwtToken || ''}`;
+	}
 	const token = Buffer.from(`${credentials.username}:${credentials.password}`).toString('base64');
 	return `Basic ${token}`;
 }

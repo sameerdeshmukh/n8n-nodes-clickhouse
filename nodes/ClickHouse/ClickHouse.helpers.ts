@@ -68,6 +68,20 @@ export interface QueryParam {
 	value: string;
 }
 
+export interface ColumnMapping {
+	sourceField: string;
+	targetColumn: string;
+}
+
+export interface QueryStats {
+	read_rows: string;
+	read_bytes: string;
+	written_rows: string;
+	written_bytes: string;
+	total_rows_to_read: string;
+	elapsed_ns: string;
+}
+
 /**
  * Validates a ClickHouse identifier (database name, table name).
  * Throws if the identifier contains invalid characters that could enable injection.
@@ -211,6 +225,140 @@ export function extractClickHouseError(error: unknown): string {
  * from ClickHouse error messages while preserving the error code and
  * the human-readable portion.
  */
+/**
+ * Applies column mapping to a row object.
+ * Renames source fields to target columns, optionally filtering to only mapped fields.
+ */
+export function applyColumnMapping(
+	row: Record<string, unknown>,
+	mappings: ColumnMapping[],
+	onlyMapped: boolean,
+): Record<string, unknown> {
+	if (!mappings || mappings.length === 0) {
+		return row;
+	}
+
+	const mappingMap = new Map<string, string>();
+	for (const m of mappings) {
+		if (m.sourceField && m.targetColumn) {
+			mappingMap.set(m.sourceField, m.targetColumn);
+		}
+	}
+
+	if (onlyMapped) {
+		const result: Record<string, unknown> = {};
+		for (const [source, target] of mappingMap) {
+			if (source in row) {
+				result[target] = row[source];
+			}
+		}
+		return result;
+	}
+
+	// Apply mappings but keep unmapped fields as-is
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(row)) {
+		const mappedName = mappingMap.get(key) || key;
+		result[mappedName] = value;
+	}
+	return result;
+}
+
+/**
+ * Parses the X-ClickHouse-Summary header into a structured stats object.
+ */
+export function parseQueryStats(summaryHeader: string | undefined): QueryStats | null {
+	if (!summaryHeader) {
+		return null;
+	}
+	try {
+		return JSON.parse(summaryHeader) as QueryStats;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Infers a ClickHouse type from a JavaScript value.
+ */
+export function inferClickHouseType(value: unknown): string {
+	if (value === null || value === undefined) {
+		return 'Nullable(String)';
+	}
+	if (typeof value === 'boolean') {
+		return 'Bool';
+	}
+	if (typeof value === 'number') {
+		return Number.isInteger(value) ? 'Int64' : 'Float64';
+	}
+	if (typeof value === 'string') {
+		// Detect ISO date strings
+		if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) {
+			return 'DateTime';
+		}
+		if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+			return 'Date';
+		}
+		// Detect UUID
+		if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+			return 'UUID';
+		}
+		return 'String';
+	}
+	if (Array.isArray(value)) {
+		if (value.length === 0) {
+			return 'Array(String)';
+		}
+		const innerType = inferClickHouseType(value[0]);
+		return `Array(${innerType})`;
+	}
+	return 'String';
+}
+
+/**
+ * Builds a CREATE TABLE DDL from column definitions and options.
+ */
+export function buildCreateTableDDL(params: {
+	table: string;
+	database: string;
+	columns: Array<{ name: string; type: string }>;
+	engine: string;
+	orderBy: string;
+	ifNotExists: boolean;
+	partitionBy?: string;
+	ttl?: string;
+}): string {
+	validateIdentifier(params.table, 'table name');
+	validateIdentifier(params.database, 'database name');
+
+	for (const col of params.columns) {
+		validateIdentifier(col.name, 'column name');
+	}
+
+	const colDefs = params.columns.map((c) => `\`${c.name}\` ${c.type}`).join(', ');
+	const ifNotExists = params.ifNotExists ? 'IF NOT EXISTS ' : '';
+
+	let ddl = `CREATE TABLE ${ifNotExists}\`${params.database}\`.\`${params.table}\` (${colDefs}) ENGINE = ${params.engine}()`;
+
+	if (params.orderBy) {
+		// Validate each ORDER BY column
+		for (const col of params.orderBy.split(',').map((c) => c.trim())) {
+			if (col) validateIdentifier(col, 'ORDER BY column');
+		}
+		ddl += ` ORDER BY (${params.orderBy})`;
+	}
+
+	if (params.partitionBy) {
+		ddl += ` PARTITION BY ${params.partitionBy}`;
+	}
+
+	if (params.ttl) {
+		ddl += ` TTL ${params.ttl}`;
+	}
+
+	return ddl;
+}
+
 function sanitizeErrorMessage(message: string): string {
 	// Keep the first 2000 characters to prevent huge error payloads
 	let sanitized = message.slice(0, 2000);

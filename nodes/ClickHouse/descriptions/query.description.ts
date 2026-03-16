@@ -78,10 +78,38 @@ export const queryFields: INodeProperties[] = [
 				type: 'number',
 				default: 100,
 				description:
-					'Maximum number of rows to return. Appended as LIMIT unless the query already contains one.',
+					'Maximum number of rows to return per page. Appended as LIMIT unless the query already contains one.',
 				typeOptions: {
 					minValue: 0,
 				},
+			},
+			{
+				displayName: 'Offset',
+				name: 'offset',
+				type: 'number',
+				default: 0,
+				description:
+					'Number of rows to skip (for pagination). Appended as OFFSET unless the query already contains one.',
+				typeOptions: {
+					minValue: 0,
+				},
+			},
+			{
+				displayName: 'Include Query Stats',
+				name: 'includeStats',
+				type: 'boolean',
+				default: false,
+				description:
+					'Whether to include execution statistics (rows_read, bytes_read, elapsed) from X-ClickHouse-Summary header',
+			},
+			{
+				displayName: 'Query ID',
+				name: 'queryId',
+				type: 'string',
+				default: '',
+				placeholder: 'my-query-001',
+				description:
+					'Optional query identifier for tracking and cancellation. Returned in the output.',
 			},
 			{
 				displayName: 'Query Settings',

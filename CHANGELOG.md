@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0] - 2026-03-16
+
+### Added
+- Update Rows operation — ALTER TABLE … UPDATE with WHERE clause
+- Delete Rows operation — ALTER TABLE … DELETE with WHERE clause
+- Create Table operation — manual column definition or auto-infer schema from input data
+- Get Table Info operation — returns schema, engine, row count, and disk size
+- List Tables operation — list all tables in a database
+- List Databases operation — list all databases on the server
+- ClickHouse Trigger node — polling trigger with New Rows and Custom Query modes
+- Dynamic database/table dropdowns populated from live ClickHouse connection
+- Shared helper utilities (sanitizeIdentifier, buildUrl, mapJsonTypeToCH)
+- Comprehensive test suite (65 tests)
+
 ## [1.1.0] - 2026-03-15
 
 ### Added
@@ -18,4 +32,4 @@
 - ClickHouse settings passthrough via JSON options field
 - continueOnFail support on all operations
 - Zero runtime npm dependencies — compatible with n8n Cloud verified node program
-- npm provenance publishing via GitHub Actions (May 2026 requirement)
+- npm provenance publishing via GitHub Actions

@@ -1,14 +1,19 @@
 {
   "name": "n8n-nodes-clickhouse-db",
   "version": "1.3.0",
-  "description": "n8n community node for ClickHouse — query, insert, and manage ClickHouse from n8n workflows and AI agents",
+  "description": "n8n community node for ClickHouse — full CRUD, schema management, polling triggers, and AI agent tool support for ClickHouse and ClickHouse Cloud",
   "keywords": [
     "n8n-community-node-package",
     "clickhouse",
+    "clickhouse-cloud",
     "database",
     "analytics",
     "olap",
-    "columnar"
+    "columnar",
+    "sql",
+    "trigger",
+    "ai-agent",
+    "crud"
   ],
   "author": {
     "name": "Sameer Deshmukh",

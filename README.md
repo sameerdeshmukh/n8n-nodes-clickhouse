@@ -1,13 +1,25 @@
 # n8n-nodes-clickhouse
 
-[![npm version](https://img.shields.io/npm/v/n8n-nodes-clickhouse.svg)](https://www.npmjs.com/package/n8n-nodes-clickhouse)
+[![npm version](https://img.shields.io/npm/v/n8n-nodes-clickhouse-db.svg)](https://www.npmjs.com/package/n8n-nodes-clickhouse-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-n8n community node for [ClickHouse](https://clickhouse.com/) — query, insert, and manage your ClickHouse databases directly from n8n workflows and AI agents.
+n8n community node for [ClickHouse](https://clickhouse.com/) — full CRUD, schema management, polling triggers, and AI agent tool support for ClickHouse and ClickHouse Cloud.
 
 ## Why This Node
 
-While n8n's built-in HTTP Request node can communicate with ClickHouse's HTTP interface, it requires manual URL construction, auth headers, response parsing, and error handling for every request. This node wraps all of that into a clean, purpose-built interface with parameterized queries, batch inserts, and full ClickHouse Cloud support — so you can focus on your data, not boilerplate.
+While n8n's built-in HTTP Request node can communicate with ClickHouse's HTTP interface, it requires manual URL construction, auth headers, response parsing, and error handling for every request. This node wraps all of that into a clean, purpose-built interface with parameterized queries, batch inserts, full CRUD operations, schema introspection, polling triggers, and full ClickHouse Cloud support — so you can focus on your data, not boilerplate.
+
+## Features at a Glance
+
+- **9 operations** — query, insert, update, delete, create table, list tables, list databases, get table info, execute raw DDL/DML
+- **Polling trigger node** — fires on new rows or custom query results, with configurable interval
+- **AI Agent ready** — `usableAsTool: true` lets LLMs query ClickHouse via natural language
+- **Parameterized queries** — native `{param:Type}` syntax, zero SQL injection risk
+- **Batch inserts** — configurable chunk size (default 1,000 rows)
+- **Schema-aware table creation** — auto-infer columns from input data or define manually
+- **JWT Bearer auth** — alternative auth for ClickHouse Cloud / SSO environments
+- **Zero runtime dependencies** — compatible with n8n Cloud verified node program
+- **ClickHouse Cloud native** — HTTPS, port 8443, tested on ClickHouse 22.x–26.x
 
 ## Installation
 
@@ -16,17 +28,13 @@ While n8n's built-in HTTP Request node can communicate with ClickHouse's HTTP in
 Go to **Settings → Community Nodes → Install** and enter:
 
 ```
-n8n-nodes-clickhouse
+n8n-nodes-clickhouse-db
 ```
 
-### n8n Cloud
-
-Search for **ClickHouse** in the nodes panel. As a verified node, no manual installation is needed.
-
-### Manual
+### Manual / Docker
 
 ```bash
-npm install n8n-nodes-clickhouse
+npm install n8n-nodes-clickhouse-db
 ```
 
 ## Operations
@@ -34,8 +42,25 @@ npm install n8n-nodes-clickhouse
 | Operation | Description |
 |-----------|-------------|
 | **Execute Query** | Run a SELECT query with optional parameterized values and return rows as n8n items |
-| **Insert** | Insert n8n input items into a ClickHouse table using JSONEachRow format with configurable batch size |
-| **Execute Raw** | Execute DDL/DML statements — CREATE TABLE, ALTER, DROP, TRUNCATE, OPTIMIZE, etc. |
+| **Insert** | Insert input items into a ClickHouse table using JSONEachRow format with configurable batch size |
+| **Update Rows** | Update rows matching a WHERE clause using ALTER TABLE … UPDATE |
+| **Delete Rows** | Delete rows matching a WHERE clause using ALTER TABLE … DELETE |
+| **Create Table** | Create a new table — define columns manually or auto-infer schema from input data |
+| **Get Table Info** | Return schema, engine, row count, and disk size for a table |
+| **List Tables** | List all tables in a database |
+| **List Databases** | List all databases on the server |
+| **Execute Raw** | Execute arbitrary DDL/DML — ALTER, DROP, TRUNCATE, OPTIMIZE, etc. |
+
+## Trigger Node
+
+The **ClickHouse Trigger** node polls for new or changed data on a configurable interval:
+
+| Mode | Description |
+|------|-------------|
+| **New Rows** | Detects new rows by tracking a monotonically increasing column (auto-increment ID, DateTime, etc.) |
+| **Custom Query** | Runs any SELECT and triggers when new results appear |
+
+The trigger stores its cursor in n8n workflow static data, so it resumes correctly across restarts.
 
 ## Credentials Setup
 
@@ -49,6 +74,7 @@ Create a new **ClickHouse API** credential with the following fields:
 | Username | `default` | ClickHouse username |
 | Password | *(empty)* | ClickHouse password |
 | Protocol | `http` | `http` or `https` (use `https` for ClickHouse Cloud) |
+| Auth Method | `Basic Auth` | Choose **Basic Auth** (username/password) or **JWT Bearer Token** for Cloud/SSO |
 
 The credential includes a built-in connectivity test that runs `SELECT 1` to verify the connection.
 
@@ -76,22 +102,29 @@ Parameters are passed as URL query params (`param_user_id=12345`), which ClickHo
 3. Set operation to **Insert**
 4. Set the table name (e.g., `webhook_events`)
 
-All fields from the incoming webhook JSON body are inserted as columns. The node sends data in batches (default: 1000 rows per request).
+All fields from the incoming webhook JSON body are inserted as columns. The node sends data in batches (default: 1,000 rows per request).
 
-### CREATE TABLE with Execute Raw
+### Update Rows
 
-Set operation to **Execute Raw** and enter:
-
-```sql
-CREATE TABLE IF NOT EXISTS events (
-    event_id UInt64,
-    user_id UInt64,
-    event_type String,
-    event_date Date,
-    payload String
-) ENGINE = MergeTree()
-ORDER BY (event_date, event_id)
 ```
+Operation: Update Rows
+Table:     users
+SET:       status = 'inactive'
+WHERE:     last_login < '2025-01-01'
+```
+
+### Create Table with Schema Inference
+
+Connect any node that outputs JSON items → set operation to **Create Table** → enable **Infer Schema from Input**. The node maps JSON types to ClickHouse types and creates the table automatically.
+
+### Polling Trigger — New Orders
+
+1. Add a **ClickHouse Trigger** node
+2. Set mode to **New Rows**
+3. Table: `orders`, Tracking Column: `order_id`
+4. Set poll interval (e.g., every 1 minute)
+
+The trigger remembers the last `order_id` it saw and only returns newer rows on each poll.
 
 ## AI Agent Tool Usage
 
@@ -111,7 +144,8 @@ For ClickHouse Cloud instances:
 - Set **Protocol** to `https`
 - Set **Port** to `8443`
 - Set **Host** to your Cloud hostname (from the ClickHouse Cloud console)
-- Compatible with ClickHouse 26.x and the Cloud service
+- Optionally use **JWT Bearer Token** auth for SSO environments
+- Compatible with ClickHouse 22.x–26.x and the Cloud service
 
 ## ClickHouse Settings
 

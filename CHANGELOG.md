@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.0] - 2026-03-15
+
+### Added
+- JWT Bearer token authentication as alternative auth method for ClickHouse Cloud/SSO environments
+- Added .env and .npmrc to .gitignore to prevent accidental secret commits
+
 ## [1.0.0] - 2026-03-12
 
 ### Added

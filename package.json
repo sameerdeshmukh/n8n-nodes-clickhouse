@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-clickhouse-db",
-  "version": "1.0.1",
+  "version": "1.3.0",
   "description": "n8n community node for ClickHouse — query, insert, and manage ClickHouse from n8n workflows and AI agents",
   "keywords": [
     "n8n-community-node-package",
@@ -39,7 +39,8 @@
       "dist/credentials/ClickHouseApi.credentials.js"
     ],
     "nodes": [
-      "dist/nodes/ClickHouse/ClickHouse.node.js"
+      "dist/nodes/ClickHouse/ClickHouse.node.js",
+      "dist/nodes/ClickHouse/ClickHouseTrigger.node.js"
     ]
   },
   "files": [

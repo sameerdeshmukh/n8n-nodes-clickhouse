@@ -7,6 +7,10 @@ import {
 	chunkArray,
 	parseClickHouseResponse,
 	extractClickHouseError,
+	applyColumnMapping,
+	parseQueryStats,
+	inferClickHouseType,
+	buildCreateTableDDL,
 } from '../nodes/ClickHouse/ClickHouse.helpers';
 import type { ClickHouseCredentials } from '../nodes/ClickHouse/ClickHouse.helpers';
 
@@ -90,10 +94,34 @@ describe('buildBaseUrl', () => {
 // ── buildAuthHeader ─────────────────────────────────────────────────
 
 describe('buildAuthHeader', () => {
-	it('returns a Basic auth header', () => {
+	it('returns a Basic auth header by default', () => {
 		const header = buildAuthHeader(creds);
 		const decoded = Buffer.from(header.replace('Basic ', ''), 'base64').toString();
 		expect(decoded).toBe('default:secret');
+	});
+
+	it('returns a Basic auth header when authMethod is basicAuth', () => {
+		const header = buildAuthHeader({ ...creds, authMethod: 'basicAuth' });
+		expect(header).toMatch(/^Basic /);
+		const decoded = Buffer.from(header.replace('Basic ', ''), 'base64').toString();
+		expect(decoded).toBe('default:secret');
+	});
+
+	it('returns a Bearer token when authMethod is bearerToken', () => {
+		const header = buildAuthHeader({
+			...creds,
+			authMethod: 'bearerToken',
+			jwtToken: 'my.jwt.token',
+		});
+		expect(header).toBe('Bearer my.jwt.token');
+	});
+
+	it('returns Bearer with empty string when jwtToken is missing', () => {
+		const header = buildAuthHeader({
+			...creds,
+			authMethod: 'bearerToken',
+		});
+		expect(header).toBe('Bearer ');
 	});
 });
 
@@ -229,5 +257,239 @@ describe('extractClickHouseError', () => {
 		const result = extractClickHouseError(error);
 		expect(result).not.toContain('/usr/src');
 		expect(result).toContain('[internal]');
+	});
+});
+
+// ── applyColumnMapping ─────────────────────────────────────────────
+
+describe('applyColumnMapping', () => {
+	it('returns row as-is when no mappings provided', () => {
+		const row = { name: 'Alice', age: 30 };
+		expect(applyColumnMapping(row, [], false)).toEqual({ name: 'Alice', age: 30 });
+	});
+
+	it('renames fields according to mappings', () => {
+		const row = { userName: 'Alice', userAge: 30, extra: 'keep' };
+		const mappings = [
+			{ sourceField: 'userName', targetColumn: 'user_name' },
+			{ sourceField: 'userAge', targetColumn: 'user_age' },
+		];
+		expect(applyColumnMapping(row, mappings, false)).toEqual({
+			user_name: 'Alice',
+			user_age: 30,
+			extra: 'keep',
+		});
+	});
+
+	it('only includes mapped fields when onlyMapped is true', () => {
+		const row = { userName: 'Alice', userAge: 30, extra: 'skip' };
+		const mappings = [
+			{ sourceField: 'userName', targetColumn: 'user_name' },
+		];
+		expect(applyColumnMapping(row, mappings, true)).toEqual({
+			user_name: 'Alice',
+		});
+	});
+
+	it('skips mappings with empty sourceField or targetColumn', () => {
+		const row = { a: 1, b: 2 };
+		const mappings = [
+			{ sourceField: '', targetColumn: 'x' },
+			{ sourceField: 'a', targetColumn: '' },
+		];
+		expect(applyColumnMapping(row, mappings, false)).toEqual({ a: 1, b: 2 });
+	});
+
+	it('handles missing source fields gracefully in onlyMapped mode', () => {
+		const row = { a: 1 };
+		const mappings = [
+			{ sourceField: 'a', targetColumn: 'x' },
+			{ sourceField: 'missing', targetColumn: 'y' },
+		];
+		expect(applyColumnMapping(row, mappings, true)).toEqual({ x: 1 });
+	});
+});
+
+// ── parseQueryStats ────────────────────────────────────────────────
+
+describe('parseQueryStats', () => {
+	it('parses valid JSON summary header', () => {
+		const header = '{"read_rows":"100","read_bytes":"4096","elapsed_ns":"12345"}';
+		const stats = parseQueryStats(header);
+		expect(stats).toEqual({
+			read_rows: '100',
+			read_bytes: '4096',
+			elapsed_ns: '12345',
+		});
+	});
+
+	it('returns null for undefined header', () => {
+		expect(parseQueryStats(undefined)).toBeNull();
+	});
+
+	it('returns null for invalid JSON', () => {
+		expect(parseQueryStats('not-json')).toBeNull();
+	});
+
+	it('returns null for empty string', () => {
+		expect(parseQueryStats('')).toBeNull();
+	});
+});
+
+// ── inferClickHouseType ────────────────────────────────────────────
+
+describe('inferClickHouseType', () => {
+	it('infers String for regular strings', () => {
+		expect(inferClickHouseType('hello')).toBe('String');
+	});
+
+	it('infers Int64 for integers', () => {
+		expect(inferClickHouseType(42)).toBe('Int64');
+		expect(inferClickHouseType(0)).toBe('Int64');
+		expect(inferClickHouseType(-100)).toBe('Int64');
+	});
+
+	it('infers Float64 for floating point numbers', () => {
+		expect(inferClickHouseType(3.14)).toBe('Float64');
+	});
+
+	it('infers Bool for booleans', () => {
+		expect(inferClickHouseType(true)).toBe('Bool');
+		expect(inferClickHouseType(false)).toBe('Bool');
+	});
+
+	it('infers DateTime for ISO date strings', () => {
+		expect(inferClickHouseType('2024-01-15T10:30:00Z')).toBe('DateTime');
+		expect(inferClickHouseType('2024-01-15T10:30:00.000Z')).toBe('DateTime');
+	});
+
+	it('infers Date for date-only strings', () => {
+		expect(inferClickHouseType('2024-01-15')).toBe('Date');
+	});
+
+	it('infers UUID for UUID strings', () => {
+		expect(inferClickHouseType('550e8400-e29b-41d4-a716-446655440000')).toBe('UUID');
+	});
+
+	it('infers Nullable(String) for null and undefined', () => {
+		expect(inferClickHouseType(null)).toBe('Nullable(String)');
+		expect(inferClickHouseType(undefined)).toBe('Nullable(String)');
+	});
+
+	it('infers Array types', () => {
+		expect(inferClickHouseType(['a', 'b'])).toBe('Array(String)');
+		expect(inferClickHouseType([1, 2, 3])).toBe('Array(Int64)');
+		expect(inferClickHouseType([])).toBe('Array(String)');
+	});
+
+	it('infers String for objects', () => {
+		expect(inferClickHouseType({ key: 'value' })).toBe('String');
+	});
+});
+
+// ── buildCreateTableDDL ────────────────────────────────────────────
+
+describe('buildCreateTableDDL', () => {
+	it('builds basic MergeTree DDL', () => {
+		const ddl = buildCreateTableDDL({
+			table: 'events',
+			database: 'default',
+			columns: [
+				{ name: 'id', type: 'UInt64' },
+				{ name: 'name', type: 'String' },
+			],
+			engine: 'MergeTree',
+			orderBy: 'id',
+			ifNotExists: true,
+		});
+		expect(ddl).toBe(
+			'CREATE TABLE IF NOT EXISTS `default`.`events` (`id` UInt64, `name` String) ENGINE = MergeTree() ORDER BY (id)',
+		);
+	});
+
+	it('builds DDL without IF NOT EXISTS', () => {
+		const ddl = buildCreateTableDDL({
+			table: 'events',
+			database: 'default',
+			columns: [{ name: 'id', type: 'UInt64' }],
+			engine: 'MergeTree',
+			orderBy: 'id',
+			ifNotExists: false,
+		});
+		expect(ddl).toContain('CREATE TABLE `default`');
+		expect(ddl).not.toContain('IF NOT EXISTS');
+	});
+
+	it('includes PARTITION BY when provided', () => {
+		const ddl = buildCreateTableDDL({
+			table: 'events',
+			database: 'default',
+			columns: [
+				{ name: 'id', type: 'UInt64' },
+				{ name: 'created_at', type: 'DateTime' },
+			],
+			engine: 'MergeTree',
+			orderBy: 'id',
+			ifNotExists: true,
+			partitionBy: 'toYYYYMM(created_at)',
+		});
+		expect(ddl).toContain('PARTITION BY toYYYYMM(created_at)');
+	});
+
+	it('includes TTL when provided', () => {
+		const ddl = buildCreateTableDDL({
+			table: 'events',
+			database: 'default',
+			columns: [
+				{ name: 'id', type: 'UInt64' },
+				{ name: 'created_at', type: 'DateTime' },
+			],
+			engine: 'MergeTree',
+			orderBy: 'id',
+			ifNotExists: true,
+			ttl: 'created_at + INTERVAL 90 DAY',
+		});
+		expect(ddl).toContain('TTL created_at + INTERVAL 90 DAY');
+	});
+
+	it('builds Memory engine DDL without ORDER BY', () => {
+		const ddl = buildCreateTableDDL({
+			table: 'tmp',
+			database: 'default',
+			columns: [{ name: 'x', type: 'Int32' }],
+			engine: 'Memory',
+			orderBy: '',
+			ifNotExists: true,
+		});
+		expect(ddl).toBe(
+			'CREATE TABLE IF NOT EXISTS `default`.`tmp` (`x` Int32) ENGINE = Memory()',
+		);
+		expect(ddl).not.toContain('ORDER BY');
+	});
+
+	it('rejects invalid table names', () => {
+		expect(() =>
+			buildCreateTableDDL({
+				table: 'DROP TABLE; --',
+				database: 'default',
+				columns: [{ name: 'id', type: 'UInt64' }],
+				engine: 'MergeTree',
+				orderBy: 'id',
+				ifNotExists: true,
+			}),
+		).toThrow('Invalid table name');
+	});
+
+	it('rejects invalid column names', () => {
+		expect(() =>
+			buildCreateTableDDL({
+				table: 'events',
+				database: 'default',
+				columns: [{ name: 'bad column', type: 'UInt64' }],
+				engine: 'MergeTree',
+				orderBy: 'id',
+				ifNotExists: true,
+			}),
+		).toThrow('Invalid column name');
 	});
 });

@@ -36,10 +36,34 @@ export class ClickHouseApi implements ICredentialType {
 			description: 'Default database to use',
 		},
 		{
+			displayName: 'Auth Method',
+			name: 'authMethod',
+			type: 'options',
+			options: [
+				{
+					name: 'Basic Auth (Username/Password)',
+					value: 'basicAuth',
+					description: 'Authenticate with username and password. Works with all ClickHouse deployments.',
+				},
+				{
+					name: 'JWT Bearer Token',
+					value: 'bearerToken',
+					description: 'Authenticate with a JWT token. Common for ClickHouse Cloud and enterprise SSO.',
+				},
+			],
+			default: 'basicAuth',
+			description: 'Authentication method to use when connecting to ClickHouse',
+		},
+		{
 			displayName: 'Username',
 			name: 'username',
 			type: 'string',
 			default: 'default',
+			displayOptions: {
+				show: {
+					authMethod: ['basicAuth'],
+				},
+			},
 		},
 		{
 			displayName: 'Password',
@@ -49,6 +73,26 @@ export class ClickHouseApi implements ICredentialType {
 				password: true,
 			},
 			default: '',
+			displayOptions: {
+				show: {
+					authMethod: ['basicAuth'],
+				},
+			},
+		},
+		{
+			displayName: 'JWT Token',
+			name: 'jwtToken',
+			type: 'string',
+			typeOptions: {
+				password: true,
+			},
+			default: '',
+			description: 'JWT bearer token for authentication',
+			displayOptions: {
+				show: {
+					authMethod: ['bearerToken'],
+				},
+			},
 		},
 		{
 			displayName: 'Protocol',
@@ -76,7 +120,7 @@ export class ClickHouseApi implements ICredentialType {
 		properties: {
 			headers: {
 				Authorization:
-					'=Basic {{Buffer.from($credentials.username + ":" + $credentials.password).toString("base64")}}',
+					'={{ $credentials.authMethod === "bearerToken" ? "Bearer " + $credentials.jwtToken : "Basic " + Buffer.from(($credentials.username || "default") + ":" + ($credentials.password || "")).toString("base64") }}',
 			},
 		},
 	};

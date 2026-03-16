@@ -221,11 +221,6 @@ export function extractClickHouseError(error: unknown): string {
 }
 
 /**
- * Removes potentially sensitive data (hostnames, IPs, ports, file paths)
- * from ClickHouse error messages while preserving the error code and
- * the human-readable portion.
- */
-/**
  * Applies column mapping to a row object.
  * Renames source fields to target columns, optionally filtering to only mapped fields.
  */
@@ -359,6 +354,11 @@ export function buildCreateTableDDL(params: {
 	return ddl;
 }
 
+/**
+ * Removes potentially sensitive data (hostnames, IPs, ports, file paths)
+ * from ClickHouse error messages while preserving the error code and
+ * the human-readable portion.
+ */
 function sanitizeErrorMessage(message: string): string {
 	// Keep the first 2000 characters to prevent huge error payloads
 	let sanitized = message.slice(0, 2000);

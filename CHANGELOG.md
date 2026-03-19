@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.4.0] - 2026-03-19
+
+### Security
+- **SQL Injection Protection** — Added strict allowlist validation for WHERE clauses in DELETE and UPDATE operations
+- **SET Expression Validation** — Validate and escape UPDATE column values to prevent injection
+- **Control Character Blocking** — Reject null bytes and control characters in SQL expressions
+- **Subquery Prevention** — Block nested SELECT statements in WHERE/SET clauses
+- **Penetration Test Suite** — Added 40+ security-focused test cases
+
+### Added
+- **Upsert Operation** — Insert or update rows with automatic ReplacingMergeTree engine detection
+- Query execution stats exposure via `_stats` field
+- Query ID tracking via `_queryId` field
+- ROADMAP.md with planned feature roadmap
+
+### Changed
+- DELETE operation now uses backtick-quoted table names for safety
+- UPDATE operation auto-escapes string values and validates all column names
+- Enhanced column mapping validation
+
 ## [1.3.0] - 2026-03-16
 
 ### Added

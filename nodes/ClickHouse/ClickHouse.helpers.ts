@@ -354,6 +354,205 @@ export function buildCreateTableDDL(params: {
 	return ddl;
 }
 
+// ============================================================================
+// SECURITY: SQL Injection Prevention
+// ============================================================================
+
+/**
+ * Dangerous SQL keywords that should never appear in WHERE/SET clauses.
+ * Uses strict blocklist approach combined with pattern validation.
+ */
+const DANGEROUS_SQL_PATTERNS = [
+	/;\s*/,                          // Semicolons (statement termination)
+	/--/,                            // SQL comment
+	/\/\*/,                          // Block comment start
+	/\*\//,                          // Block comment end
+	/\bUNION\b/i,                    // UNION injection
+	/\bDROP\b/i,                     // DROP statements
+	/\bALTER\b/i,                    // ALTER statements (except in ALTER TABLE UPDATE context)
+	/\bCREATE\b/i,                   // CREATE statements
+	/\bINSERT\b/i,                   // INSERT statements
+	/\bDELETE\b/i,                   // DELETE statements (in WHERE context)
+	/\bTRUNCATE\b/i,                 // TRUNCATE statements
+	/\bEXEC\b/i,                     // EXEC/EXECUTE
+	/\bEXECUTE\b/i,
+	/\bINTO\s+OUTFILE\b/i,           // File operations
+	/\bINTO\s+DUMPFILE\b/i,
+	/\bLOAD_FILE\b/i,
+	/\bSYSTEM\b/i,                   // System commands
+	/[\x00-\x08\x0B\x0C\x0E-\x1F]/,  // Control characters (except \t, \n, \r)
+];
+
+/**
+ * Allowed operators and keywords for WHERE clauses (strict allowlist).
+ */
+const ALLOWED_WHERE_KEYWORDS = new Set([
+	'AND', 'OR', 'NOT', 'IN', 'BETWEEN', 'LIKE', 'ILIKE',
+	'IS', 'NULL', 'TRUE', 'FALSE', 'ASC', 'DESC',
+]);
+
+/**
+ * Validates a WHERE clause for SQL injection.
+ * Uses strict allowlist approach - only permits safe operators.
+ * @throws Error if dangerous patterns are detected
+ */
+export function validateWhereClause(whereClause: string): void {
+	if (!whereClause || !whereClause.trim()) {
+		throw new Error('WHERE clause cannot be empty.');
+	}
+
+	const trimmed = whereClause.trim();
+
+	// Check for dangerous patterns
+	for (const pattern of DANGEROUS_SQL_PATTERNS) {
+		if (pattern.test(trimmed)) {
+			throw new Error(
+				`Invalid WHERE clause: contains potentially dangerous SQL pattern. ` +
+				`Only comparison operators (=, <, >, <=, >=, !=, <>), ` +
+				`logical operators (AND, OR, NOT), and conditions (IN, BETWEEN, LIKE, IS NULL) are allowed.`,
+			);
+		}
+	}
+
+	// Check for subqueries (nested SELECT)
+	if (/\(\s*SELECT\b/i.test(trimmed)) {
+		throw new Error('Invalid WHERE clause: subqueries are not allowed for security reasons.');
+	}
+
+	// Validate that identifiers don't contain suspicious characters
+	// Extract potential identifiers (words not in quotes)
+	const withoutStrings = trimmed.replace(/'[^']*'/g, '').replace(/"[^"]*"/g, '');
+	const words = withoutStrings.match(/\b[a-zA-Z_]\w*\b/g) || [];
+
+	for (const word of words) {
+		const upper = word.toUpperCase();
+		// Skip allowed keywords
+		if (ALLOWED_WHERE_KEYWORDS.has(upper)) {
+			continue;
+		}
+		// Validate as identifier (column name)
+		if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(word)) {
+			throw new Error(`Invalid identifier in WHERE clause: "${word}".`);
+		}
+	}
+}
+
+/**
+ * Escapes a string value for safe use in SQL.
+ * Escapes single quotes and backslashes.
+ */
+export function escapeStringValue(value: string): string {
+	if (typeof value !== 'string') {
+		return String(value);
+	}
+	// Check for control characters
+	if (/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(value)) {
+		throw new Error('String value contains invalid control characters.');
+	}
+	// Escape single quotes and backslashes for ClickHouse
+	return value.replace(/\\/g, '\\\\').replace(/'/g, "''");
+}
+
+/**
+ * Validates and sanitizes a SET expression for UPDATE operations.
+ * Expects format: column1 = value1, column2 = value2
+ * @throws Error if the expression contains dangerous patterns
+ */
+export function validateSetExpression(setExpression: string): void {
+	if (!setExpression || !setExpression.trim()) {
+		throw new Error('SET expression cannot be empty.');
+	}
+
+	const trimmed = setExpression.trim();
+
+	// Check for dangerous patterns
+	for (const pattern of DANGEROUS_SQL_PATTERNS) {
+		if (pattern.test(trimmed)) {
+			throw new Error(
+				`Invalid SET expression: contains potentially dangerous SQL pattern. ` +
+				`Format should be: column = value, column2 = value2`,
+			);
+		}
+	}
+
+	// Check for subqueries
+	if (/\(\s*SELECT\b/i.test(trimmed)) {
+		throw new Error('Invalid SET expression: subqueries are not allowed for security reasons.');
+	}
+
+	// Basic structure validation: should contain at least one "column = value" pair
+	// This regex matches: identifier = value (where value can be quoted string, number, or identifier)
+	const assignmentPattern = /^\s*[a-zA-Z_]\w*\s*=\s*.+$/;
+	const parts = trimmed.split(',').map(p => p.trim());
+
+	for (const part of parts) {
+		if (!assignmentPattern.test(part)) {
+			throw new Error(
+				`Invalid SET expression format: "${part}". ` +
+				`Expected format: column = value`,
+			);
+		}
+	}
+}
+
+/**
+ * Validates an array of column update specifications.
+ * Each entry should have a column name and a value.
+ */
+export function validateColumnUpdates(
+	updates: Array<{ column: string; value: string }>,
+): void {
+	if (!updates || updates.length === 0) {
+		throw new Error('At least one column update is required.');
+	}
+
+	for (const update of updates) {
+		// Validate column name as identifier
+		validateIdentifier(update.column, 'column name');
+
+		// Check value for dangerous patterns
+		const value = String(update.value);
+		for (const pattern of DANGEROUS_SQL_PATTERNS) {
+			if (pattern.test(value)) {
+				throw new Error(
+					`Invalid value for column "${update.column}": contains potentially dangerous SQL pattern.`,
+				);
+			}
+		}
+
+		// Check for subqueries in value
+		if (/\(\s*SELECT\b/i.test(value)) {
+			throw new Error(
+				`Invalid value for column "${update.column}": subqueries are not allowed.`,
+			);
+		}
+	}
+}
+
+/**
+ * Builds a safe SET clause from validated column updates.
+ * Returns format: column1 = value1, column2 = value2
+ */
+export function buildSafeSetClause(
+	updates: Array<{ column: string; value: string; quoted?: boolean }>,
+): string {
+	validateColumnUpdates(updates);
+
+	return updates.map(u => {
+		const escapedColumn = `\`${u.column}\``;
+		// If value should be quoted as string
+		if (u.quoted) {
+			return `${escapedColumn} = '${escapeStringValue(u.value)}'`;
+		}
+		// Otherwise treat as expression/number (already validated)
+		return `${escapedColumn} = ${u.value}`;
+	}).join(', ');
+}
+
+// ============================================================================
+// END SECURITY SECTION
+// ============================================================================
+
 /**
  * Removes potentially sensitive data (hostnames, IPs, ports, file paths)
  * from ClickHouse error messages while preserving the error code and

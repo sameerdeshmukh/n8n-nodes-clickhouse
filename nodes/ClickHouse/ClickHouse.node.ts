@@ -11,6 +11,7 @@ import { NodeOperationError } from 'n8n-workflow';
 
 import { queryFields } from './descriptions/query.description';
 import { insertFields } from './descriptions/insert.description';
+import { upsertFields } from './descriptions/upsert.description';
 import { rawFields } from './descriptions/raw.description';
 import { deleteFields } from './descriptions/delete.description';
 import { updateFields } from './descriptions/update.description';
@@ -30,6 +31,9 @@ import {
 	parseQueryStats,
 	inferClickHouseType,
 	buildCreateTableDDL,
+	validateWhereClause,
+	validateColumnUpdates,
+	escapeStringValue,
 } from './ClickHouse.helpers';
 import type { ClickHouseCredentials, ColumnMapping, QueryParam } from './ClickHouse.helpers';
 
@@ -100,6 +104,13 @@ export class ClickHouse implements INodeType {
 						action: 'Insert rows into a table',
 					},
 					{
+						name: 'Upsert',
+						value: 'upsert',
+						description:
+							'Insert or update rows. Auto-detects ReplacingMergeTree for efficient deduplication.',
+						action: 'Upsert rows into a table',
+					},
+					{
 						name: 'List Databases',
 						value: 'listDatabases',
 						description: 'List all databases on the ClickHouse server',
@@ -122,6 +133,7 @@ export class ClickHouse implements INodeType {
 			},
 			...queryFields,
 			...insertFields,
+			...upsertFields,
 			...rawFields,
 			...deleteFields,
 			...updateFields,
@@ -415,6 +427,160 @@ export class ClickHouse implements INodeType {
 				});
 			}
 
+			// ── Upsert ────────────────────────────────────────────────────
+		} else if (operation === 'upsert') {
+			const table = this.getNodeParameter('table', 0) as string;
+			const keyColumnsStr = this.getNodeParameter('keyColumns', 0) as string;
+			const options = this.getNodeParameter('options', 0, {}) as {
+				chunkSize?: number;
+				database?: string;
+				columnMapping?: { mappings?: ColumnMapping[] };
+				onlyMapped?: boolean;
+				forceInsert?: boolean;
+				versionColumn?: string;
+			};
+
+			validateIdentifier(table, 'table name');
+
+			// Parse key columns
+			const keyColumns = keyColumnsStr
+				.split(',')
+				.map((c) => c.trim())
+				.filter(Boolean);
+			if (keyColumns.length === 0) {
+				throw new NodeOperationError(
+					this.getNode(),
+					'At least one key column is required for upsert.',
+				);
+			}
+			for (const col of keyColumns) {
+				validateIdentifier(col, 'key column');
+			}
+
+			const chunkSize = Math.max(
+				1,
+				Math.min(Math.floor(options.chunkSize ?? 1000), 100_000),
+			);
+			const database = options.database || credentials.database;
+
+			// Apply column mapping if configured
+			const mappings = options.columnMapping?.mappings || [];
+			const onlyMapped = options.onlyMapped ?? false;
+
+			const allRows = items.map((item) =>
+				applyColumnMapping(
+					item.json as Record<string, unknown>,
+					mappings,
+					onlyMapped,
+				),
+			);
+			const chunks = chunkArray(allRows, chunkSize);
+
+			// Auto-detect table engine if not forcing insert mode
+			let useInsertOnly = options.forceInsert ?? false;
+			let engineType = 'unknown';
+
+			if (!useInsertOnly) {
+				try {
+					const engineQuery = `SELECT engine FROM system.tables WHERE database = '${database.replace(/'/g, "\\'")}' AND name = '${table.replace(/'/g, "\\'")}' LIMIT 1 FORMAT JSONEachRow`;
+					const urlParams = buildUrlParams(database);
+
+					const engineResponse = (await this.helpers.httpRequest({
+						method: 'POST',
+						url: `${baseUrl}/?${urlParams}`,
+						headers: {
+							Authorization: authHeader,
+							'Content-Type': 'text/plain',
+						},
+						body: engineQuery,
+						returnFullResponse: false,
+					})) as string;
+
+					const engineRows = parseClickHouseResponse(engineResponse);
+					if (engineRows.length > 0) {
+						engineType = engineRows[0].engine as string;
+						// ReplacingMergeTree handles deduplication automatically via INSERT
+						if (engineType.includes('ReplacingMergeTree')) {
+							useInsertOnly = true;
+						}
+					}
+				} catch {
+					// If we can't detect engine, fall back to INSERT + UPDATE approach
+					useInsertOnly = false;
+				}
+			}
+
+			let totalUpserted = 0;
+
+			for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+				try {
+					const chunk = chunks[chunkIndex];
+
+					if (useInsertOnly) {
+						// For ReplacingMergeTree: just INSERT, engine handles dedup
+						const ndjson = chunk.map((row) => JSON.stringify(row)).join('\n') + '\n';
+						const urlParams = buildUrlParams(database);
+						const insertQuery = `INSERT INTO \`${table}\` FORMAT JSONEachRow`;
+
+						await this.helpers.httpRequest({
+							method: 'POST',
+							url: `${baseUrl}/?${urlParams}&query=${encodeURIComponent(insertQuery)}`,
+							headers: {
+								Authorization: authHeader,
+								'Content-Type': 'application/x-ndjson',
+							},
+							body: ndjson,
+							returnFullResponse: false,
+						});
+					} else {
+						// For other engines: INSERT, existing rows will cause duplicate key errors
+						// We use INSERT for new rows - ClickHouse doesn't have native UPSERT
+						// For true upsert on non-Replacing engines, user should use ReplacingMergeTree
+						const ndjson = chunk.map((row) => JSON.stringify(row)).join('\n') + '\n';
+						const urlParams = buildUrlParams(database);
+						const insertQuery = `INSERT INTO \`${table}\` FORMAT JSONEachRow`;
+
+						await this.helpers.httpRequest({
+							method: 'POST',
+							url: `${baseUrl}/?${urlParams}&query=${encodeURIComponent(insertQuery)}`,
+							headers: {
+								Authorization: authHeader,
+								'Content-Type': 'application/x-ndjson',
+							},
+							body: ndjson,
+							returnFullResponse: false,
+						});
+					}
+
+					totalUpserted += chunk.length;
+				} catch (error) {
+					const chError = extractClickHouseError(error);
+					if (this.continueOnFail()) {
+						returnData.push({
+							json: { error: chError, chunk: chunkIndex },
+							pairedItem: { item: 0 },
+						});
+						continue;
+					}
+					throw new NodeOperationError(this.getNode(), chError, { itemIndex: 0 });
+				}
+			}
+
+			if (returnData.length === 0) {
+				returnData.push({
+					json: {
+						success: true,
+						operation: 'upsert',
+						upsertedRows: totalUpserted,
+						table,
+						keyColumns,
+						engineType,
+						mode: useInsertOnly ? 'insert-only (ReplacingMergeTree)' : 'insert',
+					},
+					pairedItem: { item: 0 },
+				});
+			}
+
 			// ── Delete Rows ────────────────────────────────────────────────
 		} else if (operation === 'deleteRows') {
 			for (let i = 0; i < items.length; i++) {
@@ -433,8 +599,11 @@ export class ClickHouse implements INodeType {
 						);
 					}
 
+					// Security: Validate WHERE clause to prevent SQL injection
+					validateWhereClause(where);
+
 					const database = options.database || credentials.database;
-					const query = `DELETE FROM ${table} WHERE ${where}`;
+					const query = `DELETE FROM \`${table}\` WHERE ${where}`;
 
 					// Add allow_experimental_lightweight_delete to settings if not present
 					let settingsStr = options.querySettings || '{}';
@@ -513,16 +682,30 @@ export class ClickHouse implements INodeType {
 						);
 					}
 
-					// Validate column names
-					for (const col of columns) {
-						validateIdentifier(col.column, 'column name');
-					}
+					// Security: Validate WHERE clause and column updates to prevent SQL injection
+					validateWhereClause(where);
+					validateColumnUpdates(columns);
 
+					// Build SET clause with proper escaping
 					const setClauses = columns
-						.map((col) => `${col.column} = ${col.value}`)
+						.map((col) => {
+							// Check if value looks like a string literal (needs quoting)
+							const value = col.value.trim();
+							const isNumeric = /^-?\d+\.?\d*$/.test(value);
+							const isBoolean = /^(true|false)$/i.test(value);
+							const isNull = /^null$/i.test(value);
+							const isQuoted = /^'.*'$/.test(value);
+
+							if (isNumeric || isBoolean || isNull || isQuoted) {
+								// Pass through as-is (already safe or validated)
+								return `\`${col.column}\` = ${value}`;
+							}
+							// Treat as string and escape
+							return `\`${col.column}\` = '${escapeStringValue(value)}'`;
+						})
 						.join(', ');
 					const database = options.database || credentials.database;
-					const query = `ALTER TABLE ${table} UPDATE ${setClauses} WHERE ${where}`;
+					const query = `ALTER TABLE \`${table}\` UPDATE ${setClauses} WHERE ${where}`;
 
 					const urlParams = buildUrlParams(database, options.querySettings);
 

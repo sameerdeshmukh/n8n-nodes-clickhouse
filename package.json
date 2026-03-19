@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-clickhouse-db",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "n8n community node for ClickHouse — full CRUD, schema management, polling triggers, and AI agent tool support for ClickHouse and ClickHouse Cloud",
   "keywords": [
     "n8n-community-node-package",

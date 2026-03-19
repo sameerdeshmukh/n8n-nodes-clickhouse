@@ -1,9 +1,14 @@
 # n8n-nodes-clickhouse
 
 [![npm version](https://img.shields.io/npm/v/n8n-nodes-clickhouse-db.svg)](https://www.npmjs.com/package/n8n-nodes-clickhouse-db)
+[![npm downloads](https://img.shields.io/npm/dm/n8n-nodes-clickhouse-db.svg)](https://www.npmjs.com/package/n8n-nodes-clickhouse-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Tests](https://img.shields.io/badge/tests-138%20passed-brightgreen.svg)](https://github.com/sameerdeshmukh/n8n-nodes-clickhouse)
+[![Security](https://img.shields.io/badge/security-hardened-blue.svg)](https://github.com/sameerdeshmukh/n8n-nodes-clickhouse)
 
-n8n community node for [ClickHouse](https://clickhouse.com/) — full CRUD, schema management, polling triggers, and AI agent tool support for ClickHouse and ClickHouse Cloud.
+**The most feature-complete ClickHouse integration for n8n** — full CRUD, schema management, upserts, polling triggers, and AI agent tool support for ClickHouse and ClickHouse Cloud.
+
+> **New in v1.4.0**: SQL injection protection, Upsert operation with ReplacingMergeTree auto-detection, and 138 security-focused tests.
 
 ## Why This Node
 
@@ -11,9 +16,11 @@ While n8n's built-in HTTP Request node can communicate with ClickHouse's HTTP in
 
 ## Features at a Glance
 
-- **9 operations** — query, insert, update, delete, create table, list tables, list databases, get table info, execute raw DDL/DML
+- **10 operations** — query, insert, upsert, update, delete, create table, list tables, list databases, get table info, execute raw DDL/DML
+- **Upsert with auto-detection** — automatically detects ReplacingMergeTree and uses optimal strategy
 - **Polling trigger node** — fires on new rows or custom query results, with configurable interval
 - **AI Agent ready** — `usableAsTool: true` lets LLMs query ClickHouse via natural language
+- **Security hardened** — SQL injection protection with strict validation (138 tests)
 - **Parameterized queries** — native `{param:Type}` syntax, zero SQL injection risk
 - **Batch inserts** — configurable chunk size (default 1,000 rows)
 - **Schema-aware table creation** — auto-infer columns from input data or define manually
@@ -43,6 +50,7 @@ npm install n8n-nodes-clickhouse-db
 |-----------|-------------|
 | **Execute Query** | Run a SELECT query with optional parameterized values and return rows as n8n items |
 | **Insert** | Insert input items into a ClickHouse table using JSONEachRow format with configurable batch size |
+| **Upsert** | Insert or update rows — auto-detects ReplacingMergeTree for efficient deduplication |
 | **Update Rows** | Update rows matching a WHERE clause using ALTER TABLE … UPDATE |
 | **Delete Rows** | Delete rows matching a WHERE clause using ALTER TABLE … DELETE |
 | **Create Table** | Create a new table — define columns manually or auto-infer schema from input data |

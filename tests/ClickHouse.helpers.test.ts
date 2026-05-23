@@ -16,8 +16,11 @@ import {
 	validateColumnUpdates,
 	escapeStringValue,
 	buildSafeSetClause,
+	formatRowCount,
+	formatBytes,
+	formatSchemaForAgent,
 } from '../nodes/ClickHouse/ClickHouse.helpers';
-import type { ClickHouseCredentials } from '../nodes/ClickHouse/ClickHouse.helpers';
+import type { ClickHouseCredentials, SchemaTable } from '../nodes/ClickHouse/ClickHouse.helpers';
 
 const creds: ClickHouseCredentials = {
 	host: 'localhost',
@@ -811,6 +814,208 @@ describe('SQL Injection Penetration Tests', () => {
 			it(`rejects: "${payload.slice(0, 40)}..."`, () => {
 				expect(() => validateSetExpression(payload)).toThrow();
 			});
+		});
+	});
+
+	// ========================================================================
+	// Schema Formatting (AI Agent Support)
+	// ========================================================================
+
+	describe('formatRowCount', () => {
+		it('returns "0" for zero', () => {
+			expect(formatRowCount(0)).toBe('0');
+		});
+
+		it('returns exact number below 1000', () => {
+			expect(formatRowCount(500)).toBe('500');
+			expect(formatRowCount(1)).toBe('1');
+			expect(formatRowCount(999)).toBe('999');
+		});
+
+		it('formats thousands', () => {
+			expect(formatRowCount(1000)).toBe('1.0K');
+			expect(formatRowCount(1500)).toBe('1.5K');
+			expect(formatRowCount(999_999)).toBe('1000.0K');
+		});
+
+		it('formats millions', () => {
+			expect(formatRowCount(1_000_000)).toBe('1.0M');
+			expect(formatRowCount(2_500_000)).toBe('2.5M');
+		});
+
+		it('formats billions', () => {
+			expect(formatRowCount(1_000_000_000)).toBe('1.0B');
+			expect(formatRowCount(1_500_000_000)).toBe('1.5B');
+		});
+
+		it('handles string input', () => {
+			expect(formatRowCount('5000')).toBe('5.0K');
+			expect(formatRowCount('0')).toBe('0');
+		});
+
+		it('returns "0" for NaN', () => {
+			expect(formatRowCount('abc')).toBe('0');
+		});
+	});
+
+	describe('formatBytes', () => {
+		it('returns "0B" for zero', () => {
+			expect(formatBytes(0)).toBe('0B');
+		});
+
+		it('returns bytes below 1024', () => {
+			expect(formatBytes(500)).toBe('500B');
+			expect(formatBytes(1)).toBe('1B');
+		});
+
+		it('formats kilobytes', () => {
+			expect(formatBytes(1024)).toBe('1.0KB');
+			expect(formatBytes(1536)).toBe('1.5KB');
+		});
+
+		it('formats megabytes', () => {
+			expect(formatBytes(1024 * 1024)).toBe('1.0MB');
+			expect(formatBytes(5 * 1024 * 1024)).toBe('5.0MB');
+		});
+
+		it('formats gigabytes', () => {
+			expect(formatBytes(1024 * 1024 * 1024)).toBe('1.0GB');
+			expect(formatBytes(2.5 * 1024 * 1024 * 1024)).toBe('2.5GB');
+		});
+
+		it('handles string input', () => {
+			expect(formatBytes('2048')).toBe('2.0KB');
+		});
+
+		it('returns "0B" for NaN', () => {
+			expect(formatBytes('abc')).toBe('0B');
+		});
+	});
+
+	describe('formatSchemaForAgent', () => {
+		it('formats empty database', () => {
+			const result = formatSchemaForAgent('test_db', []);
+			expect(result).toContain('Database: test_db (0 tables)');
+		});
+
+		it('uses singular "table" for one table', () => {
+			const tables: SchemaTable[] = [
+				{
+					name: 'events',
+					engine: 'MergeTree',
+					total_rows: 100,
+					total_bytes: 1024,
+					columns: [{ name: 'id', type: 'UInt64' }],
+				},
+			];
+			const result = formatSchemaForAgent('db', tables);
+			expect(result).toContain('(1 table)');
+			expect(result).not.toContain('(1 tables)');
+		});
+
+		it('formats database with tables and columns', () => {
+			const tables: SchemaTable[] = [
+				{
+					name: 'events',
+					engine: 'MergeTree',
+					total_rows: 1_000_000,
+					total_bytes: 52_428_800,
+					sorting_key: 'event_time',
+					columns: [
+						{ name: 'event_time', type: 'DateTime', is_in_sorting_key: 1 },
+						{ name: 'user_id', type: 'UInt64' },
+						{ name: 'event_type', type: 'String', comment: 'Type of event' },
+					],
+				},
+			];
+			const result = formatSchemaForAgent('analytics', tables);
+			expect(result).toContain('Database: analytics (1 table)');
+			expect(result).toContain('Table: events [MergeTree, 1.0M rows, 50.0MB]');
+			expect(result).toContain('ORDER BY (event_time)');
+			expect(result).toContain('event_time: DateTime [sort]');
+			expect(result).toContain('user_id: UInt64');
+			expect(result).toContain('event_type: String — Type of event');
+			expect(result).toContain('Summary: events (1.0M rows)');
+		});
+
+		it('includes column flags for primary key and partition key', () => {
+			const tables: SchemaTable[] = [
+				{
+					name: 'logs',
+					engine: 'MergeTree',
+					total_rows: 500,
+					total_bytes: 2048,
+					columns: [
+						{
+							name: 'ts',
+							type: 'DateTime',
+							is_in_primary_key: 1,
+							is_in_sorting_key: 1,
+							is_in_partition_key: 1,
+						},
+					],
+				},
+			];
+			const result = formatSchemaForAgent('db', tables);
+			expect(result).toContain('ts: DateTime [PK, sort, partition]');
+		});
+
+		it('includes default expression flags', () => {
+			const tables: SchemaTable[] = [
+				{
+					name: 'users',
+					engine: 'MergeTree',
+					total_rows: 0,
+					total_bytes: 0,
+					columns: [
+						{
+							name: 'created_at',
+							type: 'DateTime',
+							default_kind: 'DEFAULT',
+							default_expression: 'now()',
+						},
+					],
+				},
+			];
+			const result = formatSchemaForAgent('db', tables);
+			expect(result).toContain('created_at: DateTime [default=now()]');
+		});
+
+		it('includes table comment', () => {
+			const tables: SchemaTable[] = [
+				{
+					name: 'metrics',
+					engine: 'MergeTree',
+					total_rows: 1000,
+					total_bytes: 4096,
+					comment: 'Application metrics',
+					columns: [{ name: 'value', type: 'Float64' }],
+				},
+			];
+			const result = formatSchemaForAgent('db', tables);
+			expect(result).toContain('— Application metrics');
+		});
+
+		it('formats multiple tables with summary', () => {
+			const tables: SchemaTable[] = [
+				{
+					name: 'events',
+					engine: 'MergeTree',
+					total_rows: 1_000_000,
+					total_bytes: 0,
+					columns: [{ name: 'id', type: 'UInt64' }],
+				},
+				{
+					name: 'users',
+					engine: 'MergeTree',
+					total_rows: 50_000,
+					total_bytes: 0,
+					columns: [{ name: 'id', type: 'UInt64' }],
+				},
+			];
+			const result = formatSchemaForAgent('db', tables);
+			expect(result).toContain('(2 tables)');
+			expect(result).toContain('Summary: events (1.0M rows), users (50.0K rows)');
 		});
 	});
 });

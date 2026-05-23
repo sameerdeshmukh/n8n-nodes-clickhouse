@@ -19,6 +19,7 @@ import { listDatabasesFields } from './descriptions/listDatabases.description';
 import { listTablesFields } from './descriptions/listTables.description';
 import { getTableInfoFields } from './descriptions/getTableInfo.description';
 import { createTableFields } from './descriptions/createTable.description';
+import { describeSchemaFields } from './descriptions/describeSchema.description';
 import {
 	buildBaseUrl,
 	buildAuthHeader,
@@ -34,8 +35,9 @@ import {
 	validateWhereClause,
 	validateColumnUpdates,
 	escapeStringValue,
+	formatSchemaForAgent,
 } from './ClickHouse.helpers';
-import type { ClickHouseCredentials, ColumnMapping, QueryParam } from './ClickHouse.helpers';
+import type { ClickHouseCredentials, ColumnMapping, QueryParam, SchemaColumn, SchemaTable } from './ClickHouse.helpers';
 
 export class ClickHouse implements INodeType {
 	description: INodeTypeDescription = {
@@ -43,9 +45,10 @@ export class ClickHouse implements INodeType {
 		name: 'clickHouse',
 		icon: 'file:clickhouse.svg',
 		group: ['transform'],
-		version: [1, 2],
+		version: [1, 2, 3],
 		subtitle: '={{ $parameter["operation"] }}',
-		description: 'Query, insert, update, delete, and manage ClickHouse tables from n8n workflows',
+		description:
+			'Query, insert, update, delete, and manage ClickHouse tables. Supports AI agent tool use with schema discovery, auto-pagination for large results, and parameterized queries.',
 		defaults: {
 			name: 'ClickHouse',
 		},
@@ -78,9 +81,17 @@ export class ClickHouse implements INodeType {
 						action: 'Delete rows from a table',
 					},
 					{
+						name: 'Describe Schema',
+						value: 'describeSchema',
+						description:
+							'Get full database schema with tables, columns, types, and metadata. Ideal for AI agents to discover available data before querying.',
+						action: 'Describe the database schema',
+					},
+					{
 						name: 'Execute Query',
 						value: 'executeQuery',
-						description: 'Run a SELECT query and return the results',
+						description:
+							'Run a SELECT query with optional parameterized values, pagination, and query stats. Use Describe Schema first to discover tables and columns.',
 						action: 'Execute a query',
 					},
 					{
@@ -141,6 +152,7 @@ export class ClickHouse implements INodeType {
 			...listTablesFields,
 			...getTableInfoFields,
 			...createTableFields,
+			...describeSchemaFields,
 		],
 	};
 
@@ -258,6 +270,9 @@ export class ClickHouse implements INodeType {
 						includeStats?: boolean;
 						queryId?: string;
 						querySettings?: string;
+						autoPaginate?: boolean;
+						pageSize?: number;
+						maxRows?: number;
 					};
 
 					const queryParametersData = this.getNodeParameter(
@@ -269,81 +284,134 @@ export class ClickHouse implements INodeType {
 					};
 					const queryParams: QueryParam[] = queryParametersData.params || [];
 
-					// Append LIMIT if not already present
-					const limit = Math.max(0, Math.floor(options.limit ?? 100));
-					if (limit > 0 && !/\blimit\b/i.test(query)) {
-						query = `${query.replace(/;\s*$/, '')} LIMIT ${limit}`;
-					}
-
-					// Append OFFSET if not already present
-					const offset = Math.max(0, Math.floor(options.offset ?? 0));
-					if (offset > 0 && !/\boffset\b/i.test(query)) {
-						query = `${query.replace(/;\s*$/, '')} OFFSET ${offset}`;
-					}
-
-					// Add FORMAT JSONEachRow
-					query = `${query.replace(/;\s*$/, '')} FORMAT JSONEachRow`;
-
 					const urlParams = buildUrlParams(
 						credentials.database,
 						options.querySettings,
 						queryParams,
 					);
 
-					// Build URL with optional query_id
-					let url = `${baseUrl}/?${urlParams}`;
-					if (options.queryId) {
-						url += `&query_id=${encodeURIComponent(options.queryId)}`;
-					}
+					if (options.autoPaginate) {
+						// Auto-pagination: fetch all pages using LIMIT/OFFSET
+						const pageSize = Math.max(100, Math.min(Math.floor(options.pageSize ?? 10000), 100_000));
+						const maxRows = Math.max(1, Math.floor(options.maxRows ?? 100_000));
+						let currentOffset = 0;
+						let totalFetched = 0;
+						const baseQuery = query.replace(/;\s*$/, '');
 
-					const rawResponse = await this.helpers.httpRequest({
-						method: 'POST',
-						url,
-						headers: {
-							Authorization: authHeader,
-							'Content-Type': 'text/plain',
-						},
-						body: query,
-						returnFullResponse: options.includeStats ? true : false,
-					});
+						while (totalFetched < maxRows) {
+							const currentLimit = Math.min(pageSize, maxRows - totalFetched);
+							const pageQuery = `${baseQuery} LIMIT ${currentLimit} OFFSET ${currentOffset} FORMAT JSONEachRow`;
 
-					let responseBody: string;
-					let stats: Record<string, unknown> | null = null;
+							let url = `${baseUrl}/?${urlParams}`;
+							if (options.queryId) {
+								url += `&query_id=${encodeURIComponent(options.queryId)}`;
+							}
 
-					if (options.includeStats && rawResponse && typeof rawResponse === 'object') {
-						const fullResp = rawResponse as {
-							body: string;
-							headers: Record<string, string>;
-						};
-						responseBody = fullResp.body;
-						stats = parseQueryStats(
-							fullResp.headers?.['x-clickhouse-summary'],
-						) as unknown as Record<string, unknown>;
+							const rawResponse = await this.helpers.httpRequest({
+								method: 'POST',
+								url,
+								headers: {
+									Authorization: authHeader,
+									'Content-Type': 'text/plain',
+								},
+								body: pageQuery,
+								returnFullResponse: false,
+							});
+
+							const rows = parseClickHouseResponse(rawResponse as string);
+
+							for (const row of rows) {
+								returnData.push({
+									json: row as IDataObject,
+									pairedItem: { item: i },
+								});
+							}
+
+							totalFetched += rows.length;
+							currentOffset += rows.length;
+
+							if (rows.length < currentLimit) {
+								break;
+							}
+						}
+
+						if (totalFetched === 0 && options.queryId) {
+							returnData.push({
+								json: { _queryId: options.queryId, _totalRows: 0 },
+								pairedItem: { item: i },
+							});
+						}
 					} else {
-						responseBody = rawResponse as string;
-					}
-
-					const rows = parseClickHouseResponse(responseBody);
-					for (const row of rows) {
-						const json: IDataObject = { ...(row as IDataObject) };
-						if (stats) {
-							json._stats = stats as IDataObject;
+						// Single-page query (existing behavior)
+						// Append LIMIT if not already present
+						const limit = Math.max(0, Math.floor(options.limit ?? 100));
+						if (limit > 0 && !/\blimit\b/i.test(query)) {
+							query = `${query.replace(/;\s*$/, '')} LIMIT ${limit}`;
 						}
+
+						// Append OFFSET if not already present
+						const offset = Math.max(0, Math.floor(options.offset ?? 0));
+						if (offset > 0 && !/\boffset\b/i.test(query)) {
+							query = `${query.replace(/;\s*$/, '')} OFFSET ${offset}`;
+						}
+
+						// Add FORMAT JSONEachRow
+						query = `${query.replace(/;\s*$/, '')} FORMAT JSONEachRow`;
+
+						let url = `${baseUrl}/?${urlParams}`;
 						if (options.queryId) {
-							json._queryId = options.queryId;
+							url += `&query_id=${encodeURIComponent(options.queryId)}`;
 						}
-						returnData.push({
-							json,
-							pairedItem: { item: i },
-						});
-					}
 
-					// If no rows but stats requested, still output stats
-					if (rows.length === 0 && (stats || options.queryId)) {
-						const json: IDataObject = {};
-						if (stats) json._stats = stats as IDataObject;
-						if (options.queryId) json._queryId = options.queryId;
-						returnData.push({ json, pairedItem: { item: i } });
+						const rawResponse = await this.helpers.httpRequest({
+							method: 'POST',
+							url,
+							headers: {
+								Authorization: authHeader,
+								'Content-Type': 'text/plain',
+							},
+							body: query,
+							returnFullResponse: options.includeStats ? true : false,
+						});
+
+						let responseBody: string;
+						let stats: Record<string, unknown> | null = null;
+
+						if (options.includeStats && rawResponse && typeof rawResponse === 'object') {
+							const fullResp = rawResponse as {
+								body: string;
+								headers: Record<string, string>;
+							};
+							responseBody = fullResp.body;
+							stats = parseQueryStats(
+								fullResp.headers?.['x-clickhouse-summary'],
+							) as unknown as Record<string, unknown>;
+						} else {
+							responseBody = rawResponse as string;
+						}
+
+						const rows = parseClickHouseResponse(responseBody);
+						for (const row of rows) {
+							const json: IDataObject = { ...(row as IDataObject) };
+							if (stats) {
+								json._stats = stats as IDataObject;
+							}
+							if (options.queryId) {
+								json._queryId = options.queryId;
+							}
+							returnData.push({
+								json,
+								pairedItem: { item: i },
+							});
+						}
+
+						// If no rows but stats requested, still output stats
+						if (rows.length === 0 && (stats || options.queryId)) {
+							const json: IDataObject = {};
+							if (stats) json._stats = stats as IDataObject;
+							if (options.queryId) json._queryId = options.queryId;
+							returnData.push({ json, pairedItem: { item: i } });
+						}
 					}
 				} catch (error) {
 					const chError = extractClickHouseError(error);
@@ -1001,6 +1069,148 @@ export class ClickHouse implements INodeType {
 					},
 					pairedItem: { item: 0 },
 				});
+			} catch (error) {
+				const chError = extractClickHouseError(error);
+				if (this.continueOnFail()) {
+					returnData.push({
+						json: { error: chError },
+						pairedItem: { item: 0 },
+					});
+				} else {
+					throw new NodeOperationError(this.getNode(), chError, { itemIndex: 0 });
+				}
+			}
+
+			// ── Describe Schema ───────────────────────────────────────────
+		} else if (operation === 'describeSchema') {
+			try {
+				const options = this.getNodeParameter('options', 0, {}) as {
+					database?: string;
+					tablePattern?: string;
+					includeSamples?: boolean;
+					sampleSize?: number;
+					outputFormat?: string;
+				};
+
+				const database = options.database || credentials.database;
+				const outputFormat = options.outputFormat || 'both';
+				const urlParams = buildUrlParams(credentials.database);
+
+				let tablesQuery = `SELECT name, engine, total_rows, total_bytes, partition_key, sorting_key, primary_key, comment FROM system.tables WHERE database = '${database.replace(/'/g, "\\'")}'`;
+				if (options.tablePattern) {
+					tablesQuery += ` AND name LIKE '${options.tablePattern.replace(/'/g, "\\'")}'`;
+				}
+				tablesQuery += ` AND name NOT LIKE '.%' ORDER BY name FORMAT JSONEachRow`;
+
+				const tablesResponse = (await this.helpers.httpRequest({
+					method: 'POST',
+					url: `${baseUrl}/?${urlParams}`,
+					headers: {
+						Authorization: authHeader,
+						'Content-Type': 'text/plain',
+					},
+					body: tablesQuery,
+					returnFullResponse: false,
+				})) as string;
+
+				const tableRows = parseClickHouseResponse(tablesResponse);
+
+				let columnsQuery = `SELECT table, name, type, default_kind, default_expression, comment, is_in_partition_key, is_in_sorting_key, is_in_primary_key FROM system.columns WHERE database = '${database.replace(/'/g, "\\'")}'`;
+				if (options.tablePattern) {
+					columnsQuery += ` AND table LIKE '${options.tablePattern.replace(/'/g, "\\'")}'`;
+				}
+				columnsQuery += ` ORDER BY table, position FORMAT JSONEachRow`;
+
+				const columnsResponse = (await this.helpers.httpRequest({
+					method: 'POST',
+					url: `${baseUrl}/?${urlParams}`,
+					headers: {
+						Authorization: authHeader,
+						'Content-Type': 'text/plain',
+					},
+					body: columnsQuery,
+					returnFullResponse: false,
+				})) as string;
+
+				const columnRows = parseClickHouseResponse(columnsResponse);
+
+				const columnsByTable = new Map<string, SchemaColumn[]>();
+				for (const col of columnRows) {
+					const tableName = col.table as string;
+					if (!columnsByTable.has(tableName)) {
+						columnsByTable.set(tableName, []);
+					}
+					columnsByTable.get(tableName)!.push({
+						name: col.name as string,
+						type: col.type as string,
+						default_kind: col.default_kind as string,
+						default_expression: col.default_expression as string,
+						comment: col.comment as string,
+						is_in_sorting_key: col.is_in_sorting_key as number,
+						is_in_primary_key: col.is_in_primary_key as number,
+						is_in_partition_key: col.is_in_partition_key as number,
+					});
+				}
+
+				const schemaTables: SchemaTable[] = tableRows.map((t) => ({
+					name: t.name as string,
+					engine: t.engine as string,
+					total_rows: t.total_rows as number,
+					total_bytes: t.total_bytes as number,
+					sorting_key: t.sorting_key as string,
+					partition_key: t.partition_key as string,
+					primary_key: t.primary_key as string,
+					comment: t.comment as string,
+					columns: columnsByTable.get(t.name as string) || [],
+				}));
+
+				if (options.includeSamples) {
+					const sampleSize = Math.min(Math.max(1, options.sampleSize ?? 3), 10);
+					for (const table of schemaTables) {
+						try {
+							const sampleQuery = `SELECT * FROM \`${table.name}\` LIMIT ${sampleSize} FORMAT JSONEachRow`;
+							const sampleResponse = (await this.helpers.httpRequest({
+								method: 'POST',
+								url: `${baseUrl}/?${urlParams}`,
+								headers: {
+									Authorization: authHeader,
+									'Content-Type': 'text/plain',
+								},
+								body: sampleQuery,
+								returnFullResponse: false,
+							})) as string;
+							table.sampleData = parseClickHouseResponse(sampleResponse);
+						} catch {
+							// Skip tables we can't read
+						}
+					}
+				}
+
+				if (outputFormat === 'summary') {
+					const summary = formatSchemaForAgent(database, schemaTables);
+					returnData.push({
+						json: { database, schema: summary } as IDataObject,
+						pairedItem: { item: 0 },
+					});
+				} else if (outputFormat === 'both') {
+					const summary = formatSchemaForAgent(database, schemaTables);
+					returnData.push({
+						json: {
+							database,
+							tables: schemaTables as unknown as IDataObject[],
+							summary,
+						} as IDataObject,
+						pairedItem: { item: 0 },
+					});
+				} else {
+					returnData.push({
+						json: {
+							database,
+							tables: schemaTables as unknown as IDataObject[],
+						} as IDataObject,
+						pairedItem: { item: 0 },
+					});
+				}
 			} catch (error) {
 				const chError = extractClickHouseError(error);
 				if (this.continueOnFail()) {

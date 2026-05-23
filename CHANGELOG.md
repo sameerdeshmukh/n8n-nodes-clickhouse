@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.0] - 2026-05-23
+
+### Added
+- **Describe Schema Operation** — Fetch full database schema (tables, columns, types, metadata) in structured JSON or concise text format optimized for AI agent context windows
+- **Auto-Pagination for Execute Query** — Automatically page through large result sets using LIMIT/OFFSET with configurable page size and safety limits (max total rows)
+- **AI Agent Enhancements** — Improved operation descriptions for better AI tool discovery; agents can call Describe Schema to discover tables, then construct queries autonomously
+- **Sample Data in Schema** — Optional sample values per table to help AI agents understand data patterns
+- **Schema Text Summary** — `formatSchemaForAgent()` renders compact, readable schema descriptions with row counts, column flags (PK, sort, partition), and table engine info
+- Node version bumped to [1, 2, 3]
+
+### Changed
+- Enhanced Execute Query description to guide AI agents toward schema discovery
+- Added 21 new unit tests for schema formatting helpers (159 total)
+
 ## [1.4.0] - 2026-03-19
 
 ### Security

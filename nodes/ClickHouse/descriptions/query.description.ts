@@ -95,6 +95,36 @@ export const queryFields: INodeProperties[] = [
 				},
 			},
 			{
+				displayName: 'Auto-Paginate',
+				name: 'autoPaginate',
+				type: 'boolean',
+				default: false,
+				description:
+					'Whether to automatically fetch all result pages using LIMIT/OFFSET. Overrides manual Limit and Offset settings.',
+			},
+			{
+				displayName: 'Max Total Rows',
+				name: 'maxRows',
+				type: 'number',
+				default: 100000,
+				description:
+					'Maximum total rows to fetch across all pages. Prevents runaway queries on large tables.',
+				typeOptions: {
+					minValue: 1,
+				},
+			},
+			{
+				displayName: 'Page Size',
+				name: 'pageSize',
+				type: 'number',
+				default: 10000,
+				description: 'Number of rows to fetch per HTTP request when auto-paginating',
+				typeOptions: {
+					minValue: 100,
+					maxValue: 100000,
+				},
+			},
+			{
 				displayName: 'Include Query Stats',
 				name: 'includeStats',
 				type: 'boolean',

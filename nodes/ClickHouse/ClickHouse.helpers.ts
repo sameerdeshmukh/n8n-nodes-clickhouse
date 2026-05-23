@@ -82,6 +82,30 @@ export interface QueryStats {
 	elapsed_ns: string;
 }
 
+export interface SchemaColumn {
+	name: string;
+	type: string;
+	default_kind?: string;
+	default_expression?: string;
+	comment?: string;
+	is_in_sorting_key?: number;
+	is_in_primary_key?: number;
+	is_in_partition_key?: number;
+}
+
+export interface SchemaTable {
+	name: string;
+	engine: string;
+	total_rows: number | string;
+	total_bytes: number | string;
+	sorting_key?: string;
+	partition_key?: string;
+	primary_key?: string;
+	comment?: string;
+	columns: SchemaColumn[];
+	sampleData?: Record<string, unknown>[];
+}
+
 /**
  * Validates a ClickHouse identifier (database name, table name).
  * Throws if the identifier contains invalid characters that could enable injection.
@@ -352,6 +376,73 @@ export function buildCreateTableDDL(params: {
 	}
 
 	return ddl;
+}
+
+// ============================================================================
+// SCHEMA FORMATTING (for AI agent tool descriptions)
+// ============================================================================
+
+export function formatRowCount(count: number | string): string {
+	const n = typeof count === 'string' ? parseInt(count, 10) : count;
+	if (isNaN(n) || n === 0) return '0';
+	if (n < 1000) return String(n);
+	if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`;
+	if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	return `${(n / 1_000_000_000).toFixed(1)}B`;
+}
+
+export function formatBytes(bytes: number | string): string {
+	const n = typeof bytes === 'string' ? parseInt(bytes, 10) : bytes;
+	if (isNaN(n) || n === 0) return '0B';
+	if (n < 1024) return `${n}B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+	if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)}MB`;
+	return `${(n / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+}
+
+export function formatSchemaForAgent(database: string, tables: SchemaTable[]): string {
+	const lines: string[] = [
+		`Database: ${database} (${tables.length} table${tables.length !== 1 ? 's' : ''})`,
+		'',
+	];
+
+	for (const table of tables) {
+		const rowCount = formatRowCount(table.total_rows);
+		const size = formatBytes(table.total_bytes);
+
+		let tableHeader = `Table: ${table.name} [${table.engine}, ${rowCount} rows, ${size}]`;
+		if (table.sorting_key) {
+			tableHeader += ` ORDER BY (${table.sorting_key})`;
+		}
+		if (table.comment) {
+			tableHeader += ` — ${table.comment}`;
+		}
+		lines.push(tableHeader);
+
+		for (const col of table.columns) {
+			let colLine = `  ${col.name}: ${col.type}`;
+			const flags: string[] = [];
+			if (col.is_in_primary_key) flags.push('PK');
+			if (col.is_in_sorting_key) flags.push('sort');
+			if (col.is_in_partition_key) flags.push('partition');
+			if (col.default_kind && col.default_kind !== '') {
+				flags.push(`default=${col.default_expression}`);
+			}
+			if (flags.length > 0) colLine += ` [${flags.join(', ')}]`;
+			if (col.comment) colLine += ` — ${col.comment}`;
+			lines.push(colLine);
+		}
+		lines.push('');
+	}
+
+	if (tables.length > 0) {
+		const summaryParts = tables.map(
+			(t) => `${t.name} (${formatRowCount(t.total_rows)} rows)`,
+		);
+		lines.push(`Summary: ${summaryParts.join(', ')}`);
+	}
+
+	return lines.join('\n').trim();
 }
 
 // ============================================================================

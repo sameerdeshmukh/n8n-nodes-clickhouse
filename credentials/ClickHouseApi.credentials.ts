@@ -120,7 +120,7 @@ export class ClickHouseApi implements ICredentialType {
 		properties: {
 			headers: {
 				Authorization:
-					'={{ $credentials.authMethod === "bearerToken" ? "Bearer " + $credentials.jwtToken : "Basic " + Buffer.from(($credentials.username || "default") + ":" + ($credentials.password || "")).toString("base64") }}',
+					'={{ $credentials.authMethod === "bearerToken" ? "Bearer " + $credentials.jwtToken : "Basic " + (($credentials.username || "default") + ":" + ($credentials.password || "")).base64Encode() }}',
 			},
 		},
 	};

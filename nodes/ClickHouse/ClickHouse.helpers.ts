@@ -200,8 +200,21 @@ export function chunkArray<T>(arr: T[], size: number): T[][] {
 	return chunks;
 }
 
-export function parseClickHouseResponse(body: string): Record<string, unknown>[] {
-	if (!body || !body.trim()) {
+/**
+ * Parses a `FORMAT JSONEachRow` response into rows.
+ *
+ * ClickHouse answers JSONEachRow with `Content-Type: application/x-ndjson`, and n8n's
+ * `helpers.httpRequest` may then hand back an already-parsed array/object instead of the raw
+ * string, so accept all three shapes rather than assuming a string.
+ */
+export function parseClickHouseResponse(body: unknown): Record<string, unknown>[] {
+	if (Array.isArray(body)) {
+		return body as Record<string, unknown>[];
+	}
+	if (body !== null && typeof body === 'object') {
+		return [body as Record<string, unknown>];
+	}
+	if (typeof body !== 'string' || !body.trim()) {
 		return [];
 	}
 	return body

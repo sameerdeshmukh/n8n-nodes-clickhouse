@@ -228,6 +228,22 @@ describe('parseClickHouseResponse', () => {
 	it('handles single row without trailing newline', () => {
 		expect(parseClickHouseResponse('{"x":1}')).toEqual([{ x: 1 }]);
 	});
+
+	it('accepts an already-parsed array (n8n auto-parses application/x-ndjson)', () => {
+		expect(parseClickHouseResponse([{ name: 'a' }, { name: 'b' }])).toEqual([
+			{ name: 'a' },
+			{ name: 'b' },
+		]);
+	});
+
+	it('wraps an already-parsed single object as one row', () => {
+		expect(parseClickHouseResponse({ name: 'a' })).toEqual([{ name: 'a' }]);
+	});
+
+	it('returns empty array for null/undefined', () => {
+		expect(parseClickHouseResponse(null)).toEqual([]);
+		expect(parseClickHouseResponse(undefined)).toEqual([]);
+	});
 });
 
 // ── extractClickHouseError ──────────────────────────────────────────

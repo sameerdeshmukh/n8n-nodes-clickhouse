@@ -3,12 +3,12 @@
 [![npm version](https://img.shields.io/npm/v/n8n-nodes-clickhouse-db.svg)](https://www.npmjs.com/package/n8n-nodes-clickhouse-db)
 [![npm downloads](https://img.shields.io/npm/dm/n8n-nodes-clickhouse-db.svg)](https://www.npmjs.com/package/n8n-nodes-clickhouse-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-138%20passed-brightgreen.svg)](https://github.com/sameerdeshmukh/n8n-nodes-clickhouse)
+[![Tests](https://img.shields.io/badge/tests-159%20passed-brightgreen.svg)](https://github.com/sameerdeshmukh/n8n-nodes-clickhouse)
 [![Security](https://img.shields.io/badge/security-hardened-blue.svg)](https://github.com/sameerdeshmukh/n8n-nodes-clickhouse)
 
-**The most feature-complete ClickHouse integration for n8n** — full CRUD, schema management, upserts, polling triggers, and AI agent tool support for ClickHouse and ClickHouse Cloud.
+**The most feature-complete ClickHouse integration for n8n** — full CRUD, schema management, upserts, polling triggers, AI agent tool support with schema discovery, and auto-pagination for ClickHouse and ClickHouse Cloud.
 
-> **New in v1.4.0**: SQL injection protection, Upsert operation with ReplacingMergeTree auto-detection, and 138 security-focused tests.
+> **New in v2.0.0**: AI agent schema discovery (Describe Schema operation), auto-pagination for large result sets, enhanced AI tool descriptions, and 159 tests.
 
 ## Why This Node
 
@@ -16,11 +16,13 @@ While n8n's built-in HTTP Request node can communicate with ClickHouse's HTTP in
 
 ## Features at a Glance
 
-- **10 operations** — query, insert, upsert, update, delete, create table, list tables, list databases, get table info, execute raw DDL/DML
+- **12 operations** — query, insert, upsert, update, delete, create table, list tables, list databases, get table info, describe schema, execute raw DDL/DML
+- **AI Agent schema discovery** — Describe Schema operation returns full database schema (tables, columns, types, metadata) in structured JSON or concise text format for AI agent context windows
+- **Auto-pagination** — automatically page through large result sets with configurable page size and safety limits
 - **Upsert with auto-detection** — automatically detects ReplacingMergeTree and uses optimal strategy
 - **Polling trigger node** — fires on new rows or custom query results, with configurable interval
-- **AI Agent ready** — `usableAsTool: true` lets LLMs query ClickHouse via natural language
-- **Security hardened** — SQL injection protection with strict validation (138 tests)
+- **AI Agent ready** — `usableAsTool: true` lets LLMs discover schema and query ClickHouse via natural language
+- **Security hardened** — SQL injection protection with strict validation (159 tests)
 - **Parameterized queries** — native `{param:Type}` syntax, zero SQL injection risk
 - **Batch inserts** — configurable chunk size (default 1,000 rows)
 - **Schema-aware table creation** — auto-infer columns from input data or define manually
@@ -48,12 +50,13 @@ npm install n8n-nodes-clickhouse-db
 
 | Operation | Description |
 |-----------|-------------|
-| **Execute Query** | Run a SELECT query with optional parameterized values and return rows as n8n items |
+| **Execute Query** | Run a SELECT query with optional parameterized values, auto-pagination, and query stats |
 | **Insert** | Insert input items into a ClickHouse table using JSONEachRow format with configurable batch size |
 | **Upsert** | Insert or update rows — auto-detects ReplacingMergeTree for efficient deduplication |
 | **Update Rows** | Update rows matching a WHERE clause using ALTER TABLE … UPDATE |
 | **Delete Rows** | Delete rows matching a WHERE clause using ALTER TABLE … DELETE |
 | **Create Table** | Create a new table — define columns manually or auto-infer schema from input data |
+| **Describe Schema** | Fetch full database schema (tables, columns, types, metadata) for AI agent discovery |
 | **Get Table Info** | Return schema, engine, row count, and disk size for a table |
 | **List Tables** | List all tables in a database |
 | **List Databases** | List all databases on the server |
@@ -139,11 +142,34 @@ The trigger remembers the last `order_id` it saw and only returns newer rows on 
 This node has `usableAsTool: true`, which means it can be wired as a tool in n8n's **AI Agent** node. This allows LLMs to query ClickHouse dynamically:
 
 1. Add an **AI Agent** node to your workflow
-2. In the Agent's **Tools** section, add the **ClickHouse** node
-3. Configure the ClickHouse credentials
-4. The AI agent can now generate and execute ClickHouse queries based on natural language prompts
+2. In the Agent's **Tools** section, add **two ClickHouse nodes**:
+   - One set to **Describe Schema** — the agent calls this first to discover available tables and columns
+   - One set to **Execute Query** — the agent constructs SQL based on the discovered schema
+3. Configure the ClickHouse credentials on both
+4. The AI agent will autonomously: discover schema → understand data structure → generate SQL → return results
+
+### How It Works
+
+The **Describe Schema** operation returns schema in three formats:
+- **Structured JSON** — full nested objects with tables, columns, types, engines, row counts
+- **Text Summary** — compact format optimized for AI context windows (e.g., `Table: events [MergeTree, 1.0M rows, 50MB] → event_time: DateTime [PK, sort], user_id: UInt64, ...`)
+- **Both** — returns both formats together
+
+With optional **sample data**, the agent can see example values per table to better understand data patterns.
 
 This is useful for building conversational analytics interfaces where users can ask questions about their data in plain English.
+
+## Auto-Pagination
+
+For queries that return large result sets, enable **Auto-Paginate** in the Execute Query options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| Auto-Paginate | `false` | Automatically fetch all pages using LIMIT/OFFSET |
+| Page Size | `10,000` | Rows per HTTP request |
+| Max Total Rows | `100,000` | Safety limit to prevent runaway queries |
+
+The node fetches pages sequentially until fewer rows than the page size are returned or the max total rows limit is reached. All rows are returned as n8n items.
 
 ## ClickHouse Cloud
 
